@@ -1305,6 +1305,8 @@ static inline int web_client_switch_host(RRDHOST *host, struct web_client *w, ch
         host = rrdhost_find_by_hostname(tok, hash);
         if (!host)
             host = rrdhost_find_by_guid(tok, hash);
+        if (!host)
+            host = find_host_by_node_id(tok);
         if (!host) {
             host = sql_create_host_by_uuid(tok);
             if (likely(host)) {
