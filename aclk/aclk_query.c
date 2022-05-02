@@ -39,6 +39,7 @@ static usec_t aclk_web_api_v1_request(RRDHOST *host, struct web_client *w, char 
     usec_t t;
 
     t = now_monotonic_high_precision_usec();
+    now_realtime_timeval(&w->rrdr_created);
     w->response.code = web_client_api_request_v1(host, w, url);
     t = now_monotonic_high_precision_usec() - t;
 
@@ -86,18 +87,19 @@ static int http_api_v2(struct aclk_query_thread *query_thr, aclk_query_t query)
 {
     int retval = 0;
     usec_t t;
+    struct timeval before_mqtt;
     BUFFER *local_buffer = NULL;
     BUFFER *log_buffer = buffer_create(NETDATA_WEB_REQUEST_URL_SIZE);
     RRDHOST *query_host = localhost;
 
 #ifdef NETDATA_WITH_ZLIB
     int z_ret;
-    BUFFER *z_buffer = buffer_create(NETDATA_WEB_RESPONSE_INITIAL_SIZE);
+    BUFFER *z_buffer = buffer_create(NETDATA_WEB_RESPONSE_INITIAL_SIZE * 64);
     char *start, *end;
 #endif
 
     struct web_client *w = (struct web_client *)callocz(1, sizeof(struct web_client));
-    w->response.data = buffer_create(NETDATA_WEB_RESPONSE_INITIAL_SIZE);
+    w->response.data = buffer_create(NETDATA_WEB_RESPONSE_INITIAL_SIZE * 64);
     w->response.header = buffer_create(NETDATA_WEB_RESPONSE_HEADER_SIZE);
     w->response.header_output = buffer_create(NETDATA_WEB_RESPONSE_HEADER_SIZE);
     strcpy(w->origin, "*"); // Simulate web_client_create_on_fd()
@@ -115,6 +117,7 @@ static int http_api_v2(struct aclk_query_thread *query_thr, aclk_query_t query)
         log_access("QUERY CANCELED: QUEUE TIME EXCEEDED %0.2f ms (LIMIT %d ms)",
                    dt_usec(&query->created_tv, &w->tv_ready) / 1000.0, query->timeout);
         retval = 1;
+        now_realtime_timeval(&before_mqtt);
         w->response.code = HTTP_RESP_BACKEND_FETCH_FAILED;
         aclk_http_msg_v2_err(query_thr->client, query->callback_topic, query->msg_id, w->response.code, CLOUD_EC_SND_TIMEOUT, CLOUD_EMSG_SND_TIMEOUT, NULL, 0);
         goto cleanup;
@@ -240,14 +243,15 @@ static int http_api_v2(struct aclk_query_thread *query_thr, aclk_query_t query)
     }
 
     // send msg.
+    now_realtime_timeval(&before_mqtt);
     aclk_http_msg_v2(query_thr->client, query->callback_topic, query->msg_id, t, query->created, w->response.code, local_buffer->buffer, local_buffer->len);
 
     struct timeval tv;
 
 cleanup:
     now_realtime_timeval(&tv);
-    log_access("%llu: %d '[ACLK]:%d' '%s' (sent/all = %zu/%zu bytes %0.0f%%, prep/sent/total = %0.2f/%0.2f/%0.2f ms) %d '%s'",
-        w->id
+    log_access("%llu: %d '[ACLK]:%d' '%s' (sent/all = %zu/%zu bytes %0.0f%%, prep/rrdr/done/sent/total = %0.2f/%0.2f/%0.2f/%0.2f/%0.2f ms) %d '%s'",
+               w->id
         , gettid()
         , query_thr->idx
         , "DATA"
@@ -255,6 +259,8 @@ cleanup:
         , size
         , size > sent ? -(((size - sent) / (double)size) * 100.0) : ((size > 0) ? (((sent - size ) / (double)size) * 100.0) : 0.0)
         , dt_usec(&w->tv_ready, &w->tv_in) / 1000.0
+        , dt_usec(&w->rrdr_created, &w->tv_ready) / 1000.0
+        , dt_usec(&before_mqtt, &w->tv_ready) / 1000.0
         , dt_usec(&tv, &w->tv_ready) / 1000.0
         , dt_usec(&tv, &w->tv_in) / 1000.0
         , w->response.code

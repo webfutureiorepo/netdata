@@ -160,7 +160,7 @@ struct web_client {
     char separator;        // This value can be either '?' or 'f'
     char *url_search_path; //A pointer to the search path sent by the client
 
-    struct timeval tv_in, tv_ready;
+    struct timeval tv_in, tv_ready, rrdr_created;
 
     char cookie1[NETDATA_WEB_REQUEST_COOKIE_SIZE + 1];
     char cookie2[NETDATA_WEB_REQUEST_COOKIE_SIZE + 1];

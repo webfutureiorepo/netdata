@@ -636,7 +636,7 @@ inline int web_client_api_request_v1_data(RRDHOST *host, struct web_client *w, c
     ret = rrdset2anything_api_v1(owa, st, w->response.data, dimensions, format,
                                  points, after, before, group, group_time,
                                  options, &last_timestamp_in_data, context_param_list,
-                                 chart_label_key, max_anomaly_rates, timeout);
+                                 chart_label_key, max_anomaly_rates, timeout, w);
 
     free_context_param_list(owa, &context_param_list);
 
