@@ -70,7 +70,6 @@ extern int rrdset2anything_api_v1(
         , char *chart_label_key
         , int max_anomaly_rates
         , int timeout
-        , struct web_client *w
 );
 
 extern int rrdset2value_api_v1(

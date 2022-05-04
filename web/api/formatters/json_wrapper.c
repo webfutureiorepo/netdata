@@ -173,6 +173,7 @@ void rrdr_json_wrapper_begin(RRDR *r, BUFFER *wb, uint32_t format, RRDR_OPTIONS 
 
         RRDSET *st;
         co.c = 0;
+        dict = dictionary_create(DICTIONARY_FLAG_SINGLE_THREADED);
         for (i = 0, rd = temp_rd ? temp_rd : r->st->dimensions; rd; rd = rd->next) {
             st = rd->rrdset;
             struct label_index *labels = &st->state->labels;

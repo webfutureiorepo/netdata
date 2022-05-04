@@ -225,15 +225,12 @@ int rrdset2anything_api_v1(
         , char *chart_label_key
         , int max_anomaly_rates
         , int timeout
-        , struct web_client *w
 )
 {
     BUFFER *wb = w->response.data;
     if (context_param_list && !(context_param_list->flags & CONTEXT_FLAGS_ARCHIVE))
         st->last_accessed_time = now_realtime_sec();
 
-    RRDR *r = rrd2rrdr(owa, st, points, after, before, group_method, group_time, options, dimensions?buffer_tostring(dimensions):NULL,
-                       context_param_list, timeout);
     RRDR *r = rrd2rrdr(owa, st, points, after, before, group_method, group_time, options, dimensions?buffer_tostring(dimensions):NULL, context_param_list, timeout);
     now_realtime_timeval(&w->rrdr_created);
     if(!r) {
