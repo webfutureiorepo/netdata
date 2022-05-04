@@ -56,7 +56,7 @@ extern void rrdr_buffer_print_format(BUFFER *wb, uint32_t format);
 extern int rrdset2anything_api_v1(
           ONEWAYALLOC *owa
         , RRDSET *st
-        , BUFFER *wb
+        , struct web_client *w
         , BUFFER *dimensions
         , uint32_t format
         , long points

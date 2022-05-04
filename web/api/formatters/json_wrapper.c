@@ -2,8 +2,37 @@
 
 #include "json_wrapper.h"
 
+struct value_output {
+    int c;
+    BUFFER *wb;
+};
+
+struct value_list {
+    char *id;
+    char *name;
+};
+
+
+int value_list_output(void *entry, void *data) {
+    struct value_output *ap = (struct value_output *)data;
+    BUFFER *wb = ap->wb;
+    struct value_list *co=(struct value_list *) entry;
+    if(ap->c) buffer_strcat(wb, ",");
+    buffer_strcat(wb, "[");
+    buffer_strcat(wb, "\"");
+    buffer_strcat(wb, co->id);
+    buffer_strcat(wb, "\"");
+    buffer_strcat(wb, ", ");
+    buffer_strcat(wb, "\"");
+    buffer_strcat(wb, co->name);
+    buffer_strcat(wb, "\"");
+    buffer_strcat(wb, "]");
+    (ap->c)++;
+    return 0;
+}
+
 void rrdr_json_wrapper_begin(RRDR *r, BUFFER *wb, uint32_t format, RRDR_OPTIONS options, int string_value,
-                             struct context_param *context_param_list, char *chart_label_key)
+                             struct context_param *context_param_list, char *chart_label_key, int show_dimensions)
 {
 
     RRDDIM *temp_rd = context_param_list ? context_param_list->rd : NULL;
@@ -97,6 +126,70 @@ void rrdr_json_wrapper_begin(RRDR *r, BUFFER *wb, uint32_t format, RRDR_OPTIONS 
         buffer_strcat(wb, sq);
     }
     buffer_strcat(wb, "],\n");
+
+    if (show_dimensions) {
+        buffer_sprintf(
+            wb,
+            "   %sfull_dimension_list%s: [",
+            kq, kq);
+
+        DICTIONARY *dict = dictionary_create(DICTIONARY_FLAG_SINGLE_THREADED);
+        char name[500];
+
+        struct value_output co = {
+            .c = 0,
+            .wb = wb
+        };
+
+        for (i = 0, rd = temp_rd ? temp_rd : r->st->dimensions; rd; rd = rd->next) {
+            struct value_list vl = {.id = (char *)rd->id, .name = (char *)rd->name};
+            snprintfz(name, 499, "%s:%s", vl.id, vl.name);
+            dictionary_set(dict, name, &vl, sizeof(struct value_list));
+        }
+        dictionary_get_all(dict, value_list_output, &co);
+        dictionary_destroy(dict);
+        buffer_strcat(wb, "],\n");
+
+        co.c = 0;
+        buffer_sprintf(
+            wb,
+            "   %sfull_chart_list%s: [",
+            kq, kq);
+
+        dict = dictionary_create(DICTIONARY_FLAG_SINGLE_THREADED);
+
+        for (i = 0, rd = temp_rd ? temp_rd : r->st->dimensions; rd; rd = rd->next) {
+            struct value_list vl = {.id = rd->rrdset->id, .name = (char *)rd->rrdset->name};
+            snprintfz(name, 499, "%s:%s", vl.id, vl.name);
+            dictionary_set(dict, name, &vl, sizeof(struct value_list));
+        }
+
+        dictionary_get_all(dict, value_list_output, &co);
+        dictionary_destroy(dict);
+
+        buffer_strcat(wb, "],\n");
+
+        buffer_sprintf(wb, "   %sfull_chart_labels%s: [", kq, kq);
+
+        RRDSET *st;
+        co.c = 0;
+        for (i = 0, rd = temp_rd ? temp_rd : r->st->dimensions; rd; rd = rd->next) {
+            st = rd->rrdset;
+            struct label_index *labels = &st->state->labels;
+            netdata_rwlock_rdlock(&labels->labels_rwlock);
+            for (struct label *label = labels->head; label; label = label->next) {
+                char value[CONFIG_MAX_VALUE * 2 + 1];
+                sanitize_json_string(value, label->value, CONFIG_MAX_VALUE * 2);
+                struct value_list vl = {.id = (char *)label->key, .name = value};
+                snprintfz(name, 499, "%s:%s", label->key, value);
+                dictionary_set(dict, name, &vl, sizeof(struct value_list));
+            }
+            netdata_rwlock_unlock(&labels->labels_rwlock);
+        }
+        dictionary_get_all(dict, value_list_output, &co);
+        dictionary_destroy(dict);
+        buffer_strcat(wb, "],\n");
+    }
 
     // Composite charts
     if (context_mode && temp_rd) {

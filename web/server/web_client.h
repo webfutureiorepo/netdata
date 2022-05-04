@@ -166,6 +166,7 @@ struct web_client {
     char cookie2[NETDATA_WEB_REQUEST_COOKIE_SIZE + 1];
     char origin[NETDATA_WEB_REQUEST_ORIGIN_HEADER_SIZE + 1];
     char *user_agent;
+    int show_dimensions;
 
     struct response response;
 

@@ -1692,7 +1692,8 @@ RRDR *rrd2rrdr(
             }
             return rrd2rrdr_fixedstep(owa, st, points_requested, after_requested, before_requested, group_method,
                                       resampling_time_requested, options, dimensions, rrd_update_every,
-                                      first_entry_t, last_entry_t, absolute_period_requested, context_param_list, timeout);
+                                      first_entry_t, last_entry_t, absolute_period_requested,
+                                      context_param_list, timeout);
         } else {
             if (rrd_update_every != (uint16_t)max_interval) {
                 rrd_update_every = (uint16_t) max_interval;
