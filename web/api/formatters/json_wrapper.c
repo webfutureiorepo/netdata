@@ -176,16 +176,20 @@ void rrdr_json_wrapper_begin(RRDR *r, BUFFER *wb, uint32_t format, RRDR_OPTIONS 
         dict = dictionary_create(DICTIONARY_FLAG_SINGLE_THREADED);
         for (i = 0, rd = temp_rd ? temp_rd : r->st->dimensions; rd; rd = rd->next) {
             st = rd->rrdset;
-            struct label_index *labels = &st->state->labels;
-            netdata_rwlock_rdlock(&labels->labels_rwlock);
-            for (struct label *label = labels->head; label; label = label->next) {
-                //char value[CONFIG_MAX_VALUE * 2 + 1];
-                //sanitize_json_string(value, label->value, CONFIG_MAX_VALUE * 2);
-                struct value_list vl = {.id = (char *)label->key, .name = label->value};
-                snprintfz(name, 499, "%s:%s", label->key, label->value);
-                dictionary_set(dict, name, &vl, sizeof(struct value_list));
+            if (st->state) {
+                struct label_index *labels = &st->state->labels;
+                if (labels) {
+                    netdata_rwlock_rdlock(&labels->labels_rwlock);
+                    for (struct label *label = labels->head; label; label = label->next) {
+                        //char value[CONFIG_MAX_VALUE * 2 + 1];
+                        //sanitize_json_string(value, label->value, CONFIG_MAX_VALUE * 2);
+                        struct value_list vl = {.id = (char *)label->key, .name = label->value};
+                        snprintfz(name, 499, "%s:%s", label->key, label->value);
+                        dictionary_set(dict, name, &vl, sizeof(struct value_list));
+                    }
+                    netdata_rwlock_unlock(&labels->labels_rwlock);
+                }
             }
-            netdata_rwlock_unlock(&labels->labels_rwlock);
         }
         dictionary_get_all(dict, value_list_output, &co);
         dictionary_destroy(dict);
