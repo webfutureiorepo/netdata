@@ -1320,7 +1320,7 @@ extern RRDHOST *rrdhost_create(
     const char *abbrev_timezone, int32_t utc_offset,const char *tags, const char *program_name, const char *program_version,
     int update_every, long entries, RRD_MEMORY_MODE memory_mode, unsigned int health_enabled, unsigned int rrdpush_enabled,
     char *rrdpush_destination, char *rrdpush_api_key, char *rrdpush_send_charts_matching, struct rrdhost_system_info *system_info,
-    int is_localhost); //TODO: Remove , int is_archived);
+    int is_localhost, int locked); //TODO: Remove , int is_archived);
 
 #endif /* NETDATA_RRD_INTERNALS */
 

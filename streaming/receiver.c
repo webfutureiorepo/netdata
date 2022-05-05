@@ -515,7 +515,7 @@ static int rrdpush_receive(struct receiver_state *rpt)
         netdata_mutex_unlock(&rpt->host->receiver_lock);
     }
     else {
-        rrd_wrlock();
+        rrd_rdlock();
         rrdhost_update(
             rpt->host,
             rpt->hostname,

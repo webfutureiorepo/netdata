@@ -155,7 +155,8 @@ RRDHOST *rrdhost_create(const char *hostname,
                         char *rrdpush_api_key,
                         char *rrdpush_send_charts_matching,
                         struct rrdhost_system_info *system_info,
-                        int is_localhost
+                        int is_localhost,
+                        int locked
 ) {
     debug(D_RRDHOST, "Host '%s': adding with guid '%s'", hostname, guid);
 
@@ -164,7 +165,8 @@ RRDHOST *rrdhost_create(const char *hostname,
 #else
     int is_legacy = 1;
 #endif
-    rrd_check_wrlock();
+    if (locked == 1)
+        rrd_check_wrlock();
 
     int is_in_multihost = (memory_mode == RRD_MEMORY_MODE_DBENGINE && !is_legacy);
     RRDHOST *host = callocz(1, sizeof(RRDHOST));
@@ -291,6 +293,9 @@ RRDHOST *rrdhost_create(const char *hostname,
     // ------------------------------------------------------------------------
     // load health configuration
 
+    if (!locked)
+        rrd_wrlock();
+
     if(host->health_enabled) {
         rrdhost_wrlock(host);
         health_readdir(host, health_user_config_dir(), health_stock_config_dir(), NULL);
@@ -302,6 +307,8 @@ RRDHOST *rrdhost_create(const char *hostname,
     if(t != host) {
         error("Host '%s': cannot add host with machine guid '%s' to index. It already exists as host '%s' with machine guid '%s'.", host->hostname, host->machine_guid, t->hostname, t->machine_guid);
         rrdhost_free(host);
+        if (!locked)
+            rrd_unlock();
         return NULL;
     }
 
@@ -354,6 +361,8 @@ RRDHOST *rrdhost_create(const char *hostname,
             host = NULL;
             //rrd_hosts_available++; //TODO: maybe we want this?
 
+            if (!locked)
+                rrd_unlock();
             return host;
         }
 
@@ -434,6 +443,8 @@ RRDHOST *rrdhost_create(const char *hostname,
     );
 
     rrd_hosts_available++;
+    if (!locked)
+        rrd_unlock();
 
     return host;
 }
@@ -578,16 +589,30 @@ RRDHOST *rrdhost_find_or_create(
 ) {
     debug(D_RRDHOST, "Searching for host '%s' with guid '%s'", hostname, guid);
 
-    rrd_wrlock();
+    int do_free = 0;
+    //rrd_wrlock();
+    rrd_rdlock();
     RRDHOST *host = rrdhost_find_by_guid(guid, 0);
     if (unlikely(host && RRD_MEMORY_MODE_DBENGINE != mode && rrdhost_flag_check(host, RRDHOST_FLAG_ARCHIVED))) {
         /* If a legacy memory mode instantiates all dbengine state must be discarded to avoid inconsistencies */
         error("Archived host '%s' has memory mode '%s', but the wanted one is '%s'. Discarding archived state.",
               host->hostname, rrd_memory_mode_name(host->rrd_memory_mode), rrd_memory_mode_name(mode));
-        rrdhost_free(host);
-        host = NULL;
+        do_free = 1;
+//        rrd_unlock();
+//        rrd_wrlock();
+//        rrdhost_free(host);
+//        host = NULL;
+//        locked=2;
     }
-    if(!host) {
+
+    if(!host || do_free) {
+        rrd_unlock();
+//        rrd_wrlock();
+        if (do_free == 1) {
+            rrd_wrlock();
+            rrdhost_free(host);
+            rrd_unlock();
+        }
         host = rrdhost_create(
                 hostname
                 , registry_hostname
@@ -608,6 +633,7 @@ RRDHOST *rrdhost_find_or_create(
                 , rrdpush_api_key
                 , rrdpush_send_charts_matching
                 , system_info
+                , 0
                 , 0
         );
     }
@@ -632,15 +658,18 @@ RRDHOST *rrdhost_find_or_create(
            , rrdpush_api_key
            , rrdpush_send_charts_matching
            , system_info);
-    }
-    if (host) {
-        rrdhost_wrlock(host);
         rrdhost_flag_clear(host, RRDHOST_FLAG_ORPHAN);
         host->senders_disconnected_time = 0;
-        rrdhost_unlock(host);
+        rrd_unlock();
     }
+//    if (host) {
+//        rrdhost_wrlock(host);
+//        rrdhost_flag_clear(host, RRDHOST_FLAG_ORPHAN);
+//        host->senders_disconnected_time = 0;
+//        rrdhost_unlock(host);
+//    }
 
-    rrd_unlock();
+    //rrd_unlock();
 
     return host;
 }
@@ -730,6 +759,7 @@ int rrd_init(char *hostname, struct rrdhost_system_info *system_info) {
             , default_rrdpush_api_key
             , default_rrdpush_send_charts_matching
             , system_info
+            , 1
             , 1
     );
     if (unlikely(!localhost)) {
