@@ -617,6 +617,7 @@ void sql_health_alarm_log_load(RRDHOST *host) {
     char uuid_str[GUID_LEN + 1];
     uuid_unparse_lower_fix(&host->host_uuid, uuid_str);
 
+    sql_check_removed_alerts_state(uuid_str);
     snprintfz(command, MAX_HEALTH_SQL_SIZE, SQL_LOAD_HEALTH_LOG(uuid_str));
 
     rc = sqlite3_prepare_v2(db_meta, command, -1, &res, 0);
