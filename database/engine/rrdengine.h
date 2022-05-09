@@ -93,7 +93,7 @@ struct rrdeng_cmd {
     };
 };
 
-#define RRDENG_CMD_Q_MAX_SIZE (2048)
+#define RRDENG_CMD_Q_MAX_SIZE (8192)
 
 struct rrdeng_cmdqueue {
     unsigned head, tail;
