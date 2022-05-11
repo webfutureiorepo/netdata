@@ -168,10 +168,18 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
             debug(D_METADATALOG, "DIMENSION [%s] metadata updated", rd->id);
             (void)sql_store_dimension(&rd->state->metric_uuid, rd->rrdset->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor,
                                       rd->algorithm);
+
+            rrddim_flag_clear(rd, RRDDIM_FLAG_ACLK);
+            rd->state->aclk_live_status = (rd->state->aclk_live_status == 0);
+            rrdset_flag_set(st, RRDSET_FLAG_SYNC_CLOCK);
+            rrdset_flag_clear(st, RRDSET_FLAG_UPSTREAM_EXPOSED);
         }
         rrdset_unlock(st);
         return rd;
     }
+
+    rrdset_flag_set(st, RRDSET_FLAG_SYNC_CLOCK);
+    rrdset_flag_clear(st, RRDSET_FLAG_UPSTREAM_EXPOSED);
 
     char filename[FILENAME_MAX + 1];
     char fullfilename[FILENAME_MAX + 1];

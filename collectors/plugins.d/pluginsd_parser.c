@@ -134,10 +134,10 @@ PARSER_RC pluginsd_dimension_action(void *user, RRDSET *st, char *id, char *name
             rrddim_isnot_obsolete(st, rd);
         if (strstr(options, "hidden") != NULL) {
             rrddim_flag_set(rd, RRDDIM_FLAG_HIDDEN);
-            (void) sql_set_dimension_option(&rd->state->metric_uuid, "hidden");
+            //(void) sql_set_dimension_option(&rd->state->metric_uuid, "hidden");
         }
-        else
-            (void) sql_set_dimension_option(&rd->state->metric_uuid, NULL);
+        //else
+         //   (void) sql_set_dimension_option(&rd->state->metric_uuid, NULL);
         if (strstr(options, "noreset") != NULL)
             rrddim_flag_set(rd, RRDDIM_FLAG_DONT_DETECT_RESETS_OR_OVERFLOWS);
         if (strstr(options, "nooverflow") != NULL)
