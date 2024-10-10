@@ -19,8 +19,8 @@ RequestExecutionLevel admin
 !insertmacro MUI_PAGE_LICENSE "C:\msys64\cloud.txt"
 !insertmacro MUI_PAGE_LICENSE "C:\msys64\gpl-3.0.txt"
 !insertmacro MUI_PAGE_DIRECTORY
-!insertmacro MUI_PAGE_INSTFILES
 Page Custom NetdataConfigPage NetdataConfigLeave
+!insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -62,9 +62,12 @@ Page Custom NetdataConfigPage NetdataConfigLeave
     launch:
 !macroend
 
+var hCtrlButton
 var hStartMsys
 var startMsys
 
+var hCloudURL
+var cloudURL
 var hCloudToken
 var cloudToken
 var hCloudRooms
@@ -145,8 +148,14 @@ Function un.onInit
 !insertmacro SingleInstanceFile
 FunctionEnd
 
+Function ShowHelp
+Pop $0
+        MessageBox MB_ICONQUESTION|MB_OK "$\"Cloud URL$\" The Netdata Cloud base URL.$\n$\n$\"Proxy URL$\" set the proxy server address to use if your network requires one.$\n$\n$\"Insecure connection$\" disable verification of the server's certificate chain and host name.$\n$\n$\"Open Terminal$\" open MSYS2 terminal to run additional commands after installation." IDOK endHelp
+        endHelp:
+FunctionEnd
+
 Function NetdataConfigPage
-        !insertmacro MUI_HEADER_TEXT "Netdata configuration" "Claim your agent on Netdata Cloud"
+        !insertmacro MUI_HEADER_TEXT "Netdata configuration" "Connect your Agent to your Netdata Cloud Space"
 
         nsDialogs::Create 1018
         Pop $0
@@ -156,29 +165,39 @@ Function NetdataConfigPage
 
         IfFileExists "$INSTDIR\etc\netdata\claim.conf" NotNeeded
 
-        ${NSD_CreateLabel} 0 0 100% 12u "Enter your Token and Cloud Room(s)."
-        ${NSD_CreateLabel} 0 15% 100% 12u "Optionally, you can open a terminal to execute additional commands."
+        ${NSD_CreateLabel} 0 0 100% 12u "Enter your Space's Claim Token and the Room IDs where you want to add the Agent."
+        ${NSD_CreateLabel} 0 12% 100% 12u "If no Room IDs are specified, the Agent will be added to the $\"All nodes$\" Room."
 
-        ${NSD_CreateLabel} 0 30% 20% 10% "Token"
+        ${NSD_CreateLabel} 0 30% 20% 10% "Claim Token"
         Pop $0
         ${NSD_CreateText} 21% 30% 79% 10% ""
         Pop $hCloudToken
 
-        ${NSD_CreateLabel} 0 45% 20% 10% "Room(s)"
+        ${NSD_CreateLabel} 0 45% 20% 10% "Room ID(s)"
         Pop $0
         ${NSD_CreateText} 21% 45% 79% 10% ""
         Pop $hCloudRooms
 
-        ${NSD_CreateLabel} 0 60% 20% 10% "Proxy"
+        ${NSD_CreateLabel} 0 60% 20% 10% "Proxy URL"
         Pop $0
         ${NSD_CreateText} 21% 60% 79% 10% ""
         Pop $hProxy
 
-        ${NSD_CreateCheckbox} 0 75% 100% 10u "Insecure connection"
+        ${NSD_CreateLabel} 0 75% 20% 10% "Cloud URL"
+        Pop $0
+        ${NSD_CreateText} 21% 75% 79% 10% "https://app.netdata.cloud"
+        Pop $hCloudURL
+
+        ${NSD_CreateCheckbox} 0 92% 25% 10u "Insecure connection"
         Pop $hInsecure
 
-        ${NSD_CreateCheckbox} 0 90% 100% 10u "Open terminal"
+        ${NSD_CreateCheckbox} 50% 92% 25% 10u "Open terminal"
         Pop $hStartMsys
+
+        ${NSD_CreateButton} 90% 90% 30u 15u "&Help"
+        Pop $hCtrlButton
+        ${NSD_OnClick} $hCtrlButton ShowHelp
+
         Goto EndDialogDraw
 
         NotNeeded:
@@ -192,38 +211,11 @@ FunctionEnd
 Function NetdataConfigLeave
         ${If} $avoidClaim == ${BST_UNCHECKED}
                 ${NSD_GetText} $hCloudToken $cloudToken
+                ${NSD_GetText} $hCloudURL $cloudURL
                 ${NSD_GetText} $hCloudRooms $cloudRooms
                 ${NSD_GetText} $hProxy $proxy
                 ${NSD_GetState} $hStartMsys $startMsys
                 ${NSD_GetState} $hInsecure $insecure
-
-                StrLen $0 $cloudToken
-                StrLen $1 $cloudRooms
-                ${If} $0 == 0
-                ${OrIf} $1 == 0
-                        Goto runMsys
-                ${EndIf}
-
-                ${If} $0 == 135
-                ${AndIf} $1 >= 36
-                        nsExec::ExecToLog '$INSTDIR\usr\bin\NetdataClaim.exe /T $cloudToken /R $cloudRooms /P $proxy /I $insecure'
-                        pop $0
-                ${Else}
-                        MessageBox MB_OK "The Cloud information does not have the expected length."
-                ${EndIf}
-
-                runMsys:
-                ${If} $startMsys == ${BST_CHECKED}
-                        nsExec::ExecToLog '$INSTDIR\msys2.exe'
-                        pop $0
-                ${EndIf}
-        ${EndIf}
-
-        ClearErrors
-        nsExec::ExecToLog '$SYSDIR\sc.exe start Netdata'
-        pop $0
-        ${If} $0 != 0
-	        MessageBox MB_OK "Warning: Failed to start Netdata service."
         ${EndIf}
 FunctionEnd
 
@@ -285,44 +277,37 @@ Section "Install Netdata"
 	    DetailPrint "Warning: Failed to add Netdata service description."
         ${EndIf}
 
-	WriteUninstaller "$INSTDIR\Uninstall.exe"
+        WriteUninstaller "$INSTDIR\Uninstall.exe"
 
         Call NetdataUninstallRegistry
 
-        IfSilent runcmds goodbye
-        runcmds:
-           nsExec::ExecToLog '$SYSDIR\sc.exe start Netdata'
-           pop $0
+        StrLen $0 $cloudToken
+        StrLen $1 $cloudRooms
+        ${If} $0 == 0
+        ${OrIf} $1 == 0
+                Goto runCmds
+        ${EndIf}
 
-           System::Call 'kernel32::AttachConsole(i -1)i.r0'
-           ${If} $0 != 0
-                System::Call 'kernel32::GetStdHandle(i -11)i.r0'
-                FileWrite $0 "Netdata installed with success.$\r$\n"
-           ${EndIf}
-           ${If} $startMsys == ${BST_CHECKED}
-                   nsExec::ExecToLog '$INSTDIR\msys2.exe'
-                   pop $0
-           ${EndIf}
+        ${If} $0 == 135
+        ${AndIf} $1 >= 36
+                nsExec::ExecToLog '$INSTDIR\usr\bin\NetdataClaim.exe /T $cloudToken /R $cloudRooms /P $proxy /I $insecure /U $cloudURL'
+                pop $0
+        ${Else}
+                MessageBox MB_OK "The Cloud information does not have the expected length."
+        ${EndIf}
 
-           StrLen $0 $cloudToken
-           StrLen $1 $cloudRooms
-           ${If} $0 == 0
-           ${OrIf} $1 == 0
-                   Goto goodbye
-           ${EndIf}
+        runCmds:
+        ClearErrors
+        nsExec::ExecToLog '$SYSDIR\sc.exe start Netdata'
+        pop $0
+        ${If} $0 != 0
+	        MessageBox MB_OK "Warning: Failed to start Netdata service."
+        ${EndIf}
 
-           ${If} $0 == 135
-           ${AndIf} $1 >= 36
-                    nsExec::ExecToLog '$INSTDIR\usr\bin\NetdataClaim.exe /T $cloudToken /R $cloudRooms /P $proxy /I $insecure'
-                    pop $0
-           ${Else}         
-                    System::Call 'kernel32::AttachConsole(i -1)i.r0'
-                    ${If} $0 != 0
-                        System::Call 'kernel32::GetStdHandle(i -11)i.r0'
-                        FileWrite $0 "Room(s) or Token invalid.$\r$\n"
-                    ${EndIf}
-           ${EndIf}
-        goodbye:
+        ${If} $startMsys == ${BST_CHECKED}
+                nsExec::ExecToLog '$INSTDIR\msys2.exe'
+                pop $0
+        ${EndIf}
 SectionEnd
 
 Section "Uninstall"
@@ -340,7 +325,8 @@ Section "Uninstall"
 	    DetailPrint "Warning: Failed to delete Netdata service."
         ${EndIf}
 
-	RMDir /r "$INSTDIR"
+        # https://nsis.sourceforge.io/Reference/RMDir
+	RMDir /r /REBOOTOK "$INSTDIR"
 
         DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Netdata"
 SectionEnd
