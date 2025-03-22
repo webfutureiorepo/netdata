@@ -239,11 +239,6 @@ int unittest_prepare_rrd(const char **user) {
     return 0;
 }
 
-static void fatal_cleanup_and_exit_cb(void) {
-    netdata_cleanup_and_exit(EXIT_REASON_FATAL, "fatal error", "exiting", NULL);
-    exit(1);
-}
-
 static void fatal_status_file_save(void) {
     daemon_status_file_update_status(DAEMON_STATUS_NONE);
     exit(1);
@@ -772,6 +767,7 @@ int netdata_main(int argc, char **argv) {
     // initialize the logging system
     // IMPORTANT: KEEP THIS FIRST SO THAT THE REST OF NETDATA WILL LOG PROPERLY
 
+    netdata_conf_section_directories();
     netdata_conf_section_logs();
     nd_log_limits_unlimited();
     nd_log_initialize();
@@ -780,7 +776,8 @@ int netdata_main(int argc, char **argv) {
     // this MUST be before anything else - to load the old status file before saving a new one
 
     daemon_status_file_init(); // this loads the old file
-    nd_log_register_fatal_data_cb(daemon_status_file_register_fatal);
+    machine_guid_get(); // after loading the old daemon status file - we may need the machine guid from it
+    nd_log_register_fatal_hook_cb(daemon_status_file_register_fatal);
     nd_log_register_fatal_final_cb(fatal_status_file_save);
     exit_initiated_init();
 
@@ -1023,11 +1020,8 @@ int netdata_main(int argc, char **argv) {
     cloud_conf_init_after_registry();
     netdata_random_session_id_generate();
 
-    const char *guid = registry_get_this_machine_guid(true);
 #ifdef ENABLE_SENTRY
-    nd_sentry_set_user(guid);
-#else
-    UNUSED(guid);
+    nd_sentry_set_user(machine_guid_get_txt());
 #endif
 
     // ----------------------------------------------------------------------------------------------------------------
@@ -1141,7 +1135,7 @@ int netdata_main(int argc, char **argv) {
     // ----------------------------------------------------------------------------------------------------------------
     delta_startup_time("done");
 
-    nd_log_register_fatal_final_cb(fatal_cleanup_and_exit_cb);
+    nd_log_register_fatal_final_cb(netdata_exit_fatal);
     daemon_status_file_startup_step(NULL);
     daemon_status_file_update_status(DAEMON_STATUS_RUNNING);
     return 10;

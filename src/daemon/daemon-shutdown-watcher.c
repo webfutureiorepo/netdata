@@ -3,11 +3,25 @@
 #include "daemon-shutdown-watcher.h"
 #include "daemon-status-file.h"
 
+#ifdef ENABLE_SENTRY
+#include "sentry-native/sentry-native.h"
+#endif
+
 watcher_step_t *watcher_steps;
 
 static struct completion shutdown_begin_completion;
 static struct completion shutdown_end_completion;
 static ND_THREAD *watcher_thread;
+
+NEVER_INLINE
+static void shutdown_timed_out(void) {
+    // keep this as a separate function, to have it logged like this in sentry
+    daemon_status_file_shutdown_timeout();
+#ifdef ENABLE_SENTRY
+    nd_sentry_add_shutdown_timeout_as_breadcrumb();
+#endif
+    abort();
+}
 
 void watcher_shutdown_begin(void) {
     completion_mark_complete(&shutdown_begin_completion);
@@ -42,7 +56,6 @@ static void watcher_wait_for_step(const watcher_step_id_t step_id, usec_t shutdo
 
     daemon_status_file_shutdown_step(watcher_steps[step_id].msg);
 
-#ifdef ENABLE_SENTRY
     // Wait with a timeout
     time_t timeout = 135; // systemd gives us 150, we timeout at 135
 
@@ -51,11 +64,6 @@ static void watcher_wait_for_step(const watcher_step_id_t step_id, usec_t shutdo
         remaining_seconds = 0;
 
     bool ok = completion_timedwait_for(&watcher_steps[step_id].p, remaining_seconds);
-#else
-    // Wait indefinitely
-    bool ok = true;
-    completion_wait_for(&watcher_steps[step_id].p);
-#endif
 
     usec_t step_duration = now_monotonic_usec() - step_start_time;
 
@@ -87,7 +95,7 @@ static void watcher_wait_for_step(const watcher_step_id_t step_id, usec_t shutdo
 #endif
 
         daemon_status_file_shutdown_step("sentry timeout");
-        abort();
+        shutdown_timed_out();
     }
 }
 
@@ -103,7 +111,6 @@ void *watcher_main(void *arg)
 
     usec_t shutdown_start_time = now_monotonic_usec();
 
-    watcher_wait_for_step(WATCHER_STEP_ID_DESTROY_MAIN_SPAWN_SERVER, shutdown_start_time);
     watcher_wait_for_step(WATCHER_STEP_ID_CLOSE_WEBRTC_CONNECTIONS, shutdown_start_time);
     watcher_wait_for_step(WATCHER_STEP_ID_DISABLE_MAINTENANCE_NEW_QUERIES_NEW_WEB_REQUESTS_NEW_STREAMING_CONNECTIONS_AND_ACLK, shutdown_start_time);
     watcher_wait_for_step(WATCHER_STEP_ID_STOP_MAINTENANCE_THREAD, shutdown_start_time);
@@ -138,8 +145,6 @@ void *watcher_main(void *arg)
 void watcher_thread_start() {
     watcher_steps = callocz(WATCHER_STEP_ID_MAX, sizeof(watcher_step_t));
 
-    watcher_steps[WATCHER_STEP_ID_DESTROY_MAIN_SPAWN_SERVER].msg =
-        "destroy main spawn server";
     watcher_steps[WATCHER_STEP_ID_CLOSE_WEBRTC_CONNECTIONS].msg =
         "close webrtc connections";
     watcher_steps[WATCHER_STEP_ID_DISABLE_MAINTENANCE_NEW_QUERIES_NEW_WEB_REQUESTS_NEW_STREAMING_CONNECTIONS_AND_ACLK].msg =
@@ -188,7 +193,7 @@ void watcher_thread_start() {
     completion_init(&shutdown_begin_completion);
     completion_init(&shutdown_end_completion);
 
-    watcher_thread = nd_thread_create("P[WATCHER]", NETDATA_THREAD_OPTION_JOINABLE, watcher_main, NULL);
+    watcher_thread = nd_thread_create("EXIT_WATCHER", NETDATA_THREAD_OPTION_JOINABLE, watcher_main, NULL);
 }
 
 void watcher_thread_stop() {

@@ -65,7 +65,13 @@ void nd_signal_handler(int signo, siginfo_t *info, void *context __maybe_unused)
 
             // Update the status file
             SIGNAL_CODE sc = info ? signal_code(signo, info->si_code) : 0;
-            if(daemon_status_file_deadly_signal_received(signals_waiting[i].reason, sc, chained_handler)) {
+
+            // Get fault address based on signal type
+            void *fault_address = NULL;
+            if (info && (signo == SIGSEGV || signo == SIGBUS || signo == SIGILL || signo == SIGFPE))
+                fault_address = info->si_addr;
+
+            if(daemon_status_file_deadly_signal_received(signals_waiting[i].reason, sc, fault_address, chained_handler)) {
                 // this is a duplicate event, do not send it to sentry
 #ifdef ENABLE_SENTRY
                 nd_sentry_crash_report(false);
@@ -76,21 +82,21 @@ void nd_signal_handler(int signo, siginfo_t *info, void *context __maybe_unused)
 
             // log it
             char b[1024];
-            strncpyz(b, "SIGNAL HANDLER: received deadly signal: ", sizeof(b) - 1);
-            strcat(b, signals_waiting[i].name);
+            size_t len = 0;
+            len = strcatz(b, len, sizeof(b), "SIGNAL HANDLER: received deadly signal: ");
+            len = strcatz(b, len, sizeof(b), signals_waiting[i].name);
             if(sc) {
                 char buf[128];
                 SIGNAL_CODE_2str_h(sc, buf, sizeof(buf));
-
-                strcat(b, " (");
-                strcat(b, buf);
-                strcat(b, ")");
+                len = strcatz(b, len, sizeof(b), " (");
+                len = strcatz(b, len, sizeof(b), buf);
+                len = strcatz(b, len, sizeof(b), ")");
             }
-            strcat(b, " in thread ");
-            print_uint64(&b[strlen(b)], gettid_cached());
-            strcat(b, " ");
-            strcat(b, nd_thread_tag_async_safe());
-            strcat(b, "!\n");
+            len = strcatz(b, len, sizeof(b), " in thread ");
+            print_uint64(&b[len], gettid_cached());
+            len = strcatz(b, len, sizeof(b), " ");
+            len = strcatz(b, len, sizeof(b), nd_thread_tag_async_safe());
+            len = strcatz(b, len, sizeof(b), "!\n");
 
             if(write(STDERR_FILENO, b, strlen(b)) == -1) {
                 // nothing to do - we cannot write but there is no way to complain about it
@@ -115,7 +121,7 @@ void nd_signal_handler(int signo, siginfo_t *info, void *context __maybe_unused)
             sa.sa_handler = SIG_DFL;
             sigemptyset(&sa.sa_mask);
             sa.sa_flags = 0;
-            sigaction(signo, &sa, NULL);
+            if(sigaction(signo, &sa, NULL) < 0) { ; }
 
             // Re-raise the signal, which now uses the default action.
             raise(signo);
@@ -138,7 +144,7 @@ static void posix_unmask_my_signals(void) {
         netdata_log_error("SIGNAL: cannot unmask netdata signals");
 }
 
-void nd_cleanup_fatal_signals(void) {
+void nd_cleanup_deadly_signals(void) {
     struct sigaction act;
     memset(&act, 0, sizeof(struct sigaction));
 
@@ -231,8 +237,7 @@ static void process_triggered_signals(void) {
                     nd_log_limits_unlimited();
                     netdata_log_info("SIGNAL: Received %s. Cleaning up to exit...", name);
                     commands_exit();
-                    netdata_cleanup_and_exit(signals_waiting[i].reason, NULL, NULL, NULL);
-                    exit(0);
+                    netdata_exit_gracefully(signals_waiting[i].reason, true);
                     break;
 
                 case NETDATA_SIGNAL_DEADLY:
@@ -259,7 +264,8 @@ void nd_process_signals(void) {
             last_update_mt += save_every_ut;
         }
 
-        poll(NULL, 0, 13 * MSEC_PER_SEC + 379);
+        if(poll(NULL, 0, 13 * MSEC_PER_SEC + 379) < 0) { ; }
+
         process_triggered_signals();
     }
 }

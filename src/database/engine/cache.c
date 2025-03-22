@@ -2312,7 +2312,7 @@ bool pgc_flush_pages(PGC *cache) {
 }
 
 void pgc_page_hot_set_end_time_s(PGC *cache __maybe_unused, PGC_PAGE *page, time_t end_time_s, size_t additional_bytes) {
-    internal_fatal(!is_page_hot(page) && !exit_initiated,
+    internal_fatal(!is_page_hot(page) && !exit_initiated_get(),
                    "DBENGINE CACHE: end_time_s update on non-hot page");
 
     internal_fatal(end_time_s < __atomic_load_n(&page->end_time_s, __ATOMIC_RELAXED),
@@ -2468,7 +2468,7 @@ void pgc_open_cache_to_journal_v2(PGC *cache, Word_t section, unsigned datafile_
 
         size_t current_extent_index_id;
         Pvoid_t *PValue = JudyLIns(&JudyL_extents_pos, xio->pos, PJE0);
-        if(!PValue || *PValue == PJERR)
+        if(!PValue || PValue == PJERR)
             fatal("Corrupted JudyL extents pos");
 
         struct jv2_extents_info *ei;
@@ -2492,7 +2492,7 @@ void pgc_open_cache_to_journal_v2(PGC *cache, Word_t section, unsigned datafile_
         // update the metrics JudyL
 
         PValue = JudyLIns(&JudyL_metrics, page->metric_id, PJE0);
-        if(!PValue || *PValue == PJERR)
+        if(!PValue || PValue == PJERR)
             fatal("Corrupted JudyL metrics");
 
         struct jv2_metrics_info *mi;
@@ -2518,7 +2518,7 @@ void pgc_open_cache_to_journal_v2(PGC *cache, Word_t section, unsigned datafile_
         }
 
         PValue = JudyLIns(&mi->JudyL_pages_by_start_time, page->start_time_s, PJE0);
-        if(!PValue || *PValue == PJERR)
+        if(!PValue || PValue == PJERR)
             fatal("Corrupted JudyL metric pages");
 
         if(!*PValue) {

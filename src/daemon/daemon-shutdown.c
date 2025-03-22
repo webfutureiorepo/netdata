@@ -23,13 +23,24 @@ void abort_on_fatal_enable(void) {
     abort_on_fatal = true;
 }
 
+#ifdef ENABLE_SENTRY
+NEVER_INLINE
+static bool shutdown_on_fatal(void) {
+    // keep this as a separate function, to have it logged like this in sentry
+    if(abort_on_fatal)
+        abort();
+    else
+        return false;
+}
+#endif
+
 void web_client_cache_destroy(void);
 
 extern struct netdata_static_thread *static_threads;
 
 void netdata_log_exit_reason(void) {
     CLEAN_BUFFER *wb = buffer_create(0, NULL);
-    EXIT_REASON_2buffer(wb, exit_initiated, ", ");
+    EXIT_REASON_2buffer(wb, exit_initiated_get(), ", ");
 
     ND_LOG_STACK lgs[] = {
         ND_LOG_FIELD_UUID(NDF_MESSAGE_ID, &netdata_exit_msgid),
@@ -37,7 +48,7 @@ void netdata_log_exit_reason(void) {
     };
     ND_LOG_STACK_PUSH(lgs);
 
-    nd_log(NDLS_DAEMON, is_exit_reason_normal(exit_initiated) ? NDLP_NOTICE : NDLP_CRIT,
+    nd_log(NDLS_DAEMON, is_exit_reason_normal(exit_initiated_get()) ? NDLP_NOTICE : NDLP_CRIT,
            "NETDATA SHUTDOWN: initializing shutdown with code due to: %s",
            buffer_tostring(wb));
 }
@@ -93,15 +104,15 @@ void cancel_main_threads(void) {
     static_threads = NULL;
 }
 
+#ifdef ENABLE_DBENGINE
 static void *rrdeng_exit_background(void *ptr) {
     struct rrdengine_instance *ctx = ptr;
     rrdeng_exit(ctx);
     return NULL;
 }
 
-#ifdef ENABLE_DBENGINE
-static void rrdeng_flush_everything_and_wait(bool wait_flush, bool wait_collectors, bool dirty_only)
-{
+
+static void rrdeng_flush_everything_and_wait(bool wait_flush, bool wait_collectors, bool dirty_only) {
     static size_t starting_size_to_flush = 0;
 
     if(!pgc_hot_and_dirty_entries(main_cache))
@@ -163,15 +174,14 @@ static void rrdeng_flush_everything_and_wait(bool wait_flush, bool wait_collecto
 }
 #endif
 
-void netdata_cleanup_and_exit(EXIT_REASON reason, const char *action, const char *action_result, const char *action_data) {
+static void netdata_cleanup_and_exit(EXIT_REASON reason, bool abnormal, bool exit_when_done) {
     exit_initiated_set(reason);
-    int ret = is_exit_reason_normal(exit_initiated) ? 0 : 1;
 
     // don't recurse (due to a fatal, while exiting)
     static bool run = false;
     if(run) {
         nd_log(NDLS_DAEMON, NDLP_ERR, "EXIT: Recursion detected. Exiting immediately.");
-        exit(ret);
+        exit(1);
     }
     run = true;
     daemon_status_file_update_status(DAEMON_STATUS_EXITING);
@@ -184,21 +194,14 @@ void netdata_cleanup_and_exit(EXIT_REASON reason, const char *action, const char
     watcher_shutdown_begin();
 
 #ifdef ENABLE_DBENGINE
-    if(!ret && dbengine_enabled)
+    if(!abnormal && dbengine_enabled)
         // flush all dirty pages asap
         rrdeng_flush_everything_and_wait(false, false, true);
 #endif
 
-    // send the stat from our caller
-    analytics_statistic_t statistic = { action, action_result, action_data };
-    analytics_statistic_send(&statistic);
-
     // notify we are exiting
-    statistic = (analytics_statistic_t) {"EXIT", ret?"ERROR":"OK","-"};
-    analytics_statistic_send(&statistic);
-
-    netdata_main_spawn_server_cleanup();
-    watcher_step_complete(WATCHER_STEP_ID_DESTROY_MAIN_SPAWN_SERVER);
+    //analytics_statistic_t statistic = (analytics_statistic_t) {"EXIT", abnormal?"ERROR":"OK","-"};
+    //analytics_statistic_send(&statistic);
 
     webrtc_close_all_connections();
     watcher_step_complete(WATCHER_STEP_ID_CLOSE_WEBRTC_CONNECTIONS);
@@ -219,7 +222,7 @@ void netdata_cleanup_and_exit(EXIT_REASON reason, const char *action, const char
     watcher_step_complete(WATCHER_STEP_ID_STOP_COLLECTORS_AND_STREAMING_THREADS);
 
 #ifdef ENABLE_DBENGINE
-    if(!ret && dbengine_enabled)
+    if(!abnormal && dbengine_enabled)
         // flush all dirty pages now that all collectors and streaming completed
         rrdeng_flush_everything_and_wait(false, false, true);
 #endif
@@ -249,8 +252,7 @@ void netdata_cleanup_and_exit(EXIT_REASON reason, const char *action, const char
     metadata_sync_shutdown_background();
     watcher_step_complete(WATCHER_STEP_ID_PREPARE_METASYNC_SHUTDOWN);
 
-    if (ret)
-    {
+    if (abnormal) {
         watcher_step_complete(WATCHER_STEP_ID_STOP_COLLECTION_FOR_ALL_HOSTS);
         watcher_step_complete(WATCHER_STEP_ID_WAIT_FOR_DBENGINE_COLLECTORS_TO_FINISH);
         watcher_step_complete(WATCHER_STEP_ID_STOP_DBENGINE_TIERS);
@@ -297,8 +299,9 @@ void netdata_cleanup_and_exit(EXIT_REASON reason, const char *action, const char
     }
 
     // Don't register a shutdown event if we crashed
-    if (!ret)
+    if (!abnormal)
         add_agent_event(EVENT_AGENT_SHUTDOWN_TIME, (int64_t)(now_monotonic_usec() - shutdown_start_time));
+
     sqlite_close_databases();
     watcher_step_complete(WATCHER_STEP_ID_CLOSE_SQL_DATABASES);
     sqlite_library_shutdown();
@@ -326,6 +329,9 @@ void netdata_cleanup_and_exit(EXIT_REASON reason, const char *action, const char
 #if defined(FSANITIZE_ADDRESS)
     fprintf(stderr, "\n");
 
+    fprintf(stderr, "Stopping spawn server...\n");
+    netdata_main_spawn_server_cleanup();
+
     fprintf(stderr, "Freeing all RRDHOSTs...\n");
     rrdhost_free_all();
 
@@ -335,6 +341,7 @@ void netdata_cleanup_and_exit(EXIT_REASON reason, const char *action, const char
         fprintf(stderr, "WARNING: There are %zu dictionaries with references in them, that cannot be destroyed.\n",
                 dictionaries_referenced);
 
+#ifdef ENABLE_DBENGINE
     // destroy the caches in reverse order (extent and open depend on main cache)
     fprintf(stderr, "Destroying extent cache (PGC)...\n");
     pgc_destroy(extent_cache, false);
@@ -348,6 +355,7 @@ void netdata_cleanup_and_exit(EXIT_REASON reason, const char *action, const char
     if(metrics_referenced)
         fprintf(stderr, "WARNING: MRG had %zu metrics referenced.\n",
             metrics_referenced);
+#endif    
 
     fprintf(stderr, "Destroying UUIDMap...\n");
     size_t uuid_referenced = uuidmap_destroy();
@@ -360,33 +368,39 @@ void netdata_cleanup_and_exit(EXIT_REASON reason, const char *action, const char
         fprintf(stderr, "WARNING: STRING has %zu strings still allocated.\n",
                 strings_referenced);
 
-    // strings_destroy();
-    // functions_destroy();
-    // dyncfg_destroy();
-
     fprintf(stderr, "All done, exiting...\n");
 #endif
 
-#ifdef OS_WINDOWS
-    curl_global_cleanup();
-    return;
-#endif
+    if(!exit_when_done) {
+        curl_global_cleanup();
+        return;
+    }
 
 #ifdef ENABLE_SENTRY
-    if (ret && abort_on_fatal) {
-        abort();
-    }
-    else {
-        nd_sentry_fini();
-        curl_global_cleanup();
-        exit(ret);
-    }
+    if(abnormal)
+        shutdown_on_fatal();
+
+    nd_sentry_fini();
+    curl_global_cleanup();
+    exit(abnormal ? 1 : 0);
 #else
-    if(ret)
-        _exit(ret);
+    if(abnormal)
+        _exit(1);
     else {
         curl_global_cleanup();
-        exit(ret);
+        exit(0);
     }
 #endif
+}
+
+void netdata_exit_gracefully(EXIT_REASON reason, bool exit_when_done) {
+    exit_initiated_add(reason);
+    FUNCTION_RUN_ONCE();
+    netdata_cleanup_and_exit(reason, false, exit_when_done);
+}
+
+// the final callback for the fatal() function
+void netdata_exit_fatal(void) {
+    netdata_cleanup_and_exit(EXIT_REASON_FATAL, true, true);
+    exit(1);
 }

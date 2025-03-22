@@ -3,25 +3,67 @@
 package ddsnmp
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v2"
+
+	"github.com/netdata/netdata/go/plugins/logger"
+	"github.com/netdata/netdata/go/plugins/pkg/executable"
 )
+
+var log = logger.New().With("component", "snmp/ddsnmp")
+
+var ddProfiles []*Profile
+
+func init() {
+	dir := os.Getenv("NETDATA_STOCK_CONFIG_DIR")
+	if dir != "" {
+		dir = filepath.Join(dir, "go.d/snmp.profiles/default")
+	} else {
+		if dir, _ = filepath.Abs("../../../config/go.d/snmp.profiles/default"); !isDirExists(dir) {
+			dir = filepath.Join(executable.Directory, "../../../../usr/lib/netdata/conf.d/go.d/snmp.profiles/default")
+		}
+	}
+	profiles, err := load(dir)
+	if err != nil {
+		log.Errorf("failed to load dd snmp profiles: %v", err)
+		return
+	}
+	if len(profiles) == 0 {
+		log.Warningf("no dd snmp profiles found in '%s'", dir)
+		return
+	}
+
+	log.Infof("found %d profiles in '%s'", len(profiles), dir)
+	ddProfiles = profiles
+}
 
 func load(dirpath string) ([]*Profile, error) {
 	var profiles []*Profile
 
 	if err := filepath.WalkDir(dirpath, func(path string, d fs.DirEntry, err error) error {
-		if !(strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")) {
-			return nil
-		}
-		profile, err := loadYAML(path)
 		if err != nil {
 			return err
 		}
+		if !(strings.HasSuffix(d.Name(), ".yaml") || strings.HasSuffix(d.Name(), ".yml")) {
+			return nil
+		}
+
+		profile, err := loadProfile(path)
+		if err != nil {
+			log.Warningf("invalid profile '%s': %v", path, err)
+			return nil
+		}
+
+		if err := profile.validate(); err != nil {
+			log.Warningf("invalid profile '%s': %v", path, err)
+			return nil
+		}
+
 		profiles = append(profiles, profile)
 		return nil
 	}); err != nil {
@@ -31,14 +73,14 @@ func load(dirpath string) ([]*Profile, error) {
 	return profiles, nil
 }
 
-func loadYAML(filename string) (*Profile, error) {
+func loadProfile(filename string) (*Profile, error) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}
 
 	var prof Profile
-	if err := yaml.Unmarshal(content, &prof); err != nil {
+	if err := yaml.Unmarshal(content, &prof.Definition); err != nil {
 		return nil, err
 	}
 
@@ -48,30 +90,22 @@ func loadYAML(filename string) (*Profile, error) {
 
 	dir := filepath.Dir(filename)
 
-	for _, name := range prof.Extends {
-		baseProf, err := loadYAML(filepath.Join(dir, name))
+	for _, name := range prof.Definition.Extends {
+		baseProf, err := loadProfile(filepath.Join(dir, name))
 		if err != nil {
 			return nil, err
 		}
-		mergeProfiles(&prof, baseProf)
+
+		prof.merge(baseProf)
 	}
 
 	return &prof, nil
 }
 
-func mergeProfiles(child, parent *Profile) {
-	child.Metrics = append(parent.Metrics, child.Metrics...)
-	//
-	//if child.Metadata == nil || len(child.Metadata.Device) == 0 {
-	//	return
-	//}
-	//if child.Metadata.Device.Fields == nil {
-	//	child.Metadata.Device.Fields = make(map[string]Symbol)
-	//}
-	//
-	//for key, value := range parent.Metadata.Device.Fields {
-	//	if _, exists := child.Metadata.Device.Fields[key]; !exists {
-	//		child.Metadata.Device.Fields[key] = value
-	//	}
-	//}
+func isDirExists(dir string) bool {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return !errors.Is(err, fs.ErrNotExist)
+	}
+	return fi.Mode().IsDir()
 }

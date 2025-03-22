@@ -10,10 +10,13 @@ void cancel_main_threads(void);
 void abort_on_fatal_disable(void);
 void abort_on_fatal_enable(void);
 
-#ifdef OS_WINDOWS
-void netdata_cleanup_and_exit(EXIT_REASON reason, const char *action, const char *action_result, const char *action_data);
+#if !defined(OS_WINDOWS)
+#define ND_EXIT_NORETURN NORETURN
 #else
-void netdata_cleanup_and_exit(EXIT_REASON reason, const char *action, const char *action_result, const char *action_data) NORETURN;
+#define ND_EXIT_NORETURN
 #endif
+
+void netdata_exit_gracefully(EXIT_REASON reason, bool exit_when_done);
+void netdata_exit_fatal(void);
 
 #endif //NETDATA_DAEMON_SHUTDOWN_H
